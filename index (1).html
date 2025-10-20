@@ -1,0 +1,172 @@
+<!-- The file was truncated in your message, but here is how you would continue from the last comment in the script: -->
+
+        // --- VTO App Logic this is the whole code
+
+        // Generate Button State Management
+        const generateButton = document.getElementById('generateButton');
+        const generateContent = document.getElementById('generateContent');
+        const generateText = document.getElementById('generateText');
+        const generateIcon = document.getElementById('generateIcon');
+        const generateSpinner = document.getElementById('generateSpinner');
+
+        let generateState = STATE_IDLE;
+        function setGenerateState(state) {
+            generateState = state;
+            generateButton.classList.remove(STATE_LOADING, STATE_SUCCESS);
+            generateButton.style.width = '';
+            switch (state) {
+                case STATE_IDLE:
+                    generateContent.style.opacity = '1';
+                    generateSpinner.style.opacity = '0';
+                    generateButton.disabled = false;
+                    generateButton.classList.remove('pointer-events-none');
+                    generateIcon.innerHTML = GENERATE_ICON_HTML;
+                    generateText.textContent = 'Generate Try-On';
+                    generateButton.style.width = '15rem';
+                    break;
+                case STATE_LOADING:
+                    generateButton.classList.add(STATE_LOADING, 'pointer-events-none');
+                    generateContent.style.opacity = '0';
+                    setTimeout(() => { generateSpinner.style.opacity = '1'; }, 200);
+                    generateButton.disabled = true;
+                    generateButton.style.width = '3.5rem';
+                    break;
+                case STATE_SUCCESS:
+                    generateButton.classList.add(STATE_SUCCESS);
+                    generateButton.classList.remove('pointer-events-none');
+                    generateSpinner.style.opacity = '0';
+                    generateContent.style.opacity = '1';
+                    generateIcon.innerHTML = SUCCESS_ICON_HTML;
+                    generateText.textContent = 'Done!';
+                    generateButton.disabled = false;
+                    generateButton.style.width = '15rem';
+                    break;
+            }
+        }
+        setGenerateState(STATE_IDLE);
+
+        // Helper to convert file to base64
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = e => reject(e);
+                reader.readAsDataURL(file);
+            });
+        }
+
+        // Main Generate Function
+        async function generateTryOnImage() {
+            // Hide previous output
+            tryOnImage.classList.add('hidden');
+            errorMessage.classList.add('hidden');
+            setGenerateState(STATE_LOADING);
+
+            // Get files and prompt
+            const filePerson = document.getElementById('filePerson').files[0];
+            const fileProduct = document.getElementById('fileProduct').files[0];
+            const prompt = tryOnPromptInput.value.trim();
+
+            if (!filePerson || !fileProduct) {
+                setGenerateState(STATE_IDLE);
+                errorMessage.textContent = "Please upload both the person/model and product images.";
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+
+            // Convert images to base64
+            let imagePersonBase64, imageProductBase64;
+            try {
+                imagePersonBase64 = await fileToBase64(filePerson);
+                imageProductBase64 = await fileToBase64(fileProduct);
+            } catch (e) {
+                setGenerateState(STATE_IDLE);
+                errorMessage.textContent = "Failed to read images. Please try again.";
+                errorMessage.classList.remove('hidden');
+                return;
+            }
+
+            // Compose request body for Gemini (Google AI Studio)
+            const requestBody = {
+                contents: [
+                    {
+                        parts: [
+                            {
+                                text: prompt
+                            },
+                            {
+                                inlineData: {
+                                    mimeType: filePerson.type,
+                                    data: imagePersonBase64
+                                }
+                            },
+                            {
+                                inlineData: {
+                                    mimeType: fileProduct.type,
+                                    data: imageProductBase64
+                                }
+                            }
+                        ]
+                    }
+                ]
+            };
+
+            // Make the API call with retries
+            let retries = 0;
+            while (retries < MAX_RETRIES) {
+                try {
+                    const response = await fetch(API_URL, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(requestBody)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`API error: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    // Find base64 image in the response
+                    let base64Image = null;
+                    if (
+                        data.candidates &&
+                        data.candidates[0] &&
+                        data.candidates[0].content &&
+                        data.candidates[0].content.parts
+                    ) {
+                        const imgPart = data.candidates[0].content.parts.find(
+                            p => p.inlineData && p.inlineData.mimeType.startsWith('image/')
+                        );
+                        if (imgPart) {
+                            base64Image = imgPart.inlineData.data;
+                            tryOnImage.src = `data:${imgPart.inlineData.mimeType};base64,${base64Image}`;
+                            tryOnImage.classList.remove('hidden');
+                            errorMessage.classList.add('hidden');
+                            // Success state and burst
+                            setTimeout(() => {
+                                burstParticles(generateButton);
+                                setGenerateState(STATE_SUCCESS);
+                                setTimeout(() => setGenerateState(STATE_IDLE), 2200);
+                            }, 320);
+                            return;
+                        }
+                    }
+                    // If no image found in response
+                    throw new Error('No image returned from API');
+                } catch (e) {
+                    retries++;
+                    if (retries >= MAX_RETRIES) {
+                        setGenerateState(STATE_IDLE);
+                        errorMessage.textContent = "Image generation failed. Please try again later.";
+                        errorMessage.classList.remove('hidden');
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Export generateTryOnImage to global scope for onclick
+        window.generateTryOnImage = generateTryOnImage;
+
+    </script>
+</body>
+</html>
